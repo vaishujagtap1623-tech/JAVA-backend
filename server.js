@@ -1,5 +1,5 @@
 const express = require("express");
-const fs = require("fs/promises");
+const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
@@ -17,14 +17,12 @@ function run(cmd, args, opts) {
     let stdout = "";
     let stderr = "";
 
-    // stdout
     if (p.stdout) {
       p.stdout.on("data", function (d) {
         stdout += d.toString();
       });
     }
 
-    // stderr
     if (p.stderr) {
       p.stderr.on("data", function (d) {
         stderr += d.toString();
@@ -65,6 +63,45 @@ function run(cmd, args, opts) {
   });
 }
 
+function mkdtemp(prefix) {
+  return new Promise(function (resolve, reject) {
+    fs.mkdtemp(prefix, function (err, folder) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(folder);
+      }
+    });
+  });
+}
+
+function writeFile(file, data) {
+  return new Promise(function (resolve, reject) {
+    fs.writeFile(file, data, "utf8", function (err) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+function removeDirectory(dir) {
+  return new Promise(function (resolve) {
+    fs.rm(
+      dir,
+      {
+        recursive: true,
+        force: true
+      },
+      function () {
+        resolve();
+      }
+    );
+  });
+}
+
 // Health check
 app.get("/api/health", function (req, res) {
   res.json({
@@ -75,7 +112,7 @@ app.get("/api/health", function (req, res) {
   });
 });
 
-// Java code execution
+// Execute Java code
 app.post("/api/execute", async function (req, res) {
   const body = req.body || {};
 
@@ -84,14 +121,15 @@ app.post("/api/execute", async function (req, res) {
   const fileName = body.fileName || "Main.java";
   const projectType = body.projectType || "core-java";
 
-  const dir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "javastudio-")
-  );
+  let dir;
 
   try {
+    dir = await mkdtemp(
+      path.join(os.tmpdir(), "javastudio-")
+    );
+
     const safeName = path.basename(fileName);
 
-    // JSP / Servlet projects
     if (
       projectType === "web-jsp" ||
       safeName.endsWith(".jsp")
@@ -107,13 +145,11 @@ app.post("/api/execute", async function (req, res) {
       });
     }
 
-    // Save Java source
     const src = path.join(dir, safeName);
 
-    await fs.writeFile(
+    await writeFile(
       src,
-      sourceCode,
-      "utf8"
+      sourceCode
     );
 
     // Compile Java
@@ -137,7 +173,6 @@ app.post("/api/execute", async function (req, res) {
       });
     }
 
-    // Main class name
     const main = safeName.replace(
       /\.java$/,
       ""
@@ -159,7 +194,6 @@ app.post("/api/execute", async function (req, res) {
         runResult.code === 0
           ? "success"
           : "error",
-
       stdout: runResult.stdout,
       stderr: runResult.stderr,
       compileErrors: "",
@@ -180,17 +214,13 @@ app.post("/api/execute", async function (req, res) {
 
   } finally {
 
-    await fs.rm(
-      dir,
-      {
-        recursive: true,
-        force: true
-      }
-    ).catch(function () {});
+    if (dir) {
+      await removeDirectory(dir);
+    }
   }
 });
 
-// Render PORT support
+// Render PORT
 const PORT = process.env.PORT || 8080;
 
 app.listen(
